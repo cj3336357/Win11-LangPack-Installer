@@ -1,0 +1,20 @@
+# Microsoft media - not redistributable, never commit
+*.iso
+*.cab
+*.appx
+*.appxbundle
+*.msix
+*.esd
+*.wim
+LanguagesAndOptionalFeatures/
+
+# build output / archives
+*.exe
+LangPack_build.ps1
+*.zip
+*.rar
+*.7z
+
+# reports and logs
+LangPack_Report_*.txt
+*.log
