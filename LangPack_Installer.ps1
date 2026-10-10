@@ -912,6 +912,23 @@ $btnInstall.Add_Click({
         Log "非 Unicode 程序語言：$systemLocale"
         if ($basePath) { Log "來源路徑：$basePath" } else { Log "⚠️  無 ISO 來源，.cab / FOD 將略過" }
 
+        # 防止 Windows 自動清走「未使用」的預裝語言包（Microsoft 建議：製作映像 / Sysprep 前要做）
+        foreach ($t in @(
+            @{ Path = "\Microsoft\Windows\AppxDeploymentClient\"; Name = "Pre-staged app cleanup" },
+            @{ Path = "\Microsoft\Windows\MUI\";                  Name = "LPRemove" },
+            @{ Path = "\Microsoft\Windows\LanguageComponentsInstaller\"; Name = "Uninstallation" })) {
+            try { Disable-ScheduledTask -TaskPath $t.Path -TaskName $t.Name -ErrorAction Stop | Out-Null; Log "已停用排程：$($t.Path)$($t.Name)" }
+            catch { Log "ℹ️  排程不存在或已停用：$($t.Path)$($t.Name)" }
+        }
+        try {
+            $pol = "HKLM:\SOFTWARE\Policies\Microsoft\Control Panel\International"
+            if (-not (Test-Path $pol)) { New-Item -Path $pol -Force | Out-Null }
+            Set-ItemProperty -Path $pol -Name "BlockCleanupOfUnusedPreinstalledLangPacks" -Value 1 -Type DWord -Force
+            Log "已設定 BlockCleanupOfUnusedPreinstalledLangPacks = 1"
+        } catch { Log "⚠️  無法設定語言包清理政策：$($_.Exception.Message)" }
+
+        $cabsDone = @{}   # 本次已安裝的 .cab（zh-HK 與 zh-TW 共用同一個）
+
         foreach ($lang in $langs) {
 
             if ($cancel.Value) { Log "--- 安裝已取消 ---"; break }
@@ -944,16 +961,18 @@ $btnInstall.Add_Click({
                     Log "zh-HK 無專屬 .cab，自動使用 zh-TW .cab 補全繁體 UI..."
                 }
 
-                if (Test-Path $lpPath) {
+                if ($cabsDone.ContainsKey($cabTag)) {
+                    SetStep $steps 0 "skip"; Log "ℹ️  .cab（$cabTag）已於本次安裝，略過。"
+                } elseif (Test-Path $lpPath) {
                     Log "安裝 .cab：$cabTag..."
                     # Fix: 路徑用引號包住，避免路徑含空格時 DISM 解析失敗
                     $exitCode = Start-Proc "Dism.exe" @("/online", "/NoRestart", "/Add-Package", "/PackagePath:`"$lpPath`"", "/LimitAccess")
                     if ($exitCode -eq -1) {
                         SetStep $steps 0 "skip"; Log "取消：.cab 安裝已中止。"
                     } elseif ($exitCode -eq 0 -or $exitCode -eq 3010) {
-                        SetStep $steps 0 "done"; Log ".cab 安裝成功。"
+                        SetStep $steps 0 "done"; Log ".cab 安裝成功。"; $cabsDone[$cabTag] = $true
                     } elseif ($exitCode -eq -2146498222 -or $exitCode -eq 2148468074) {
-                        SetStep $steps 0 "skip"; Log "ℹ️  .cab 已安裝，略過。"
+                        SetStep $steps 0 "skip"; Log "ℹ️  .cab 已安裝，略過。"; $cabsDone[$cabTag] = $true
                     } else {
                         SetStep $steps 0 "error"; Log "⚠️  .cab 失敗 (Exit: $exitCode)。"
                     }
@@ -966,8 +985,10 @@ $btnInstall.Add_Click({
             # --- 2. LXP .appx ---
             SetStep $steps 1 "running"
             $searchTag = if ($tagLower -eq "zh-hk") { "zh-TW" } else { $tagBcp47 }
+            # 同一語言有多個版本時，用版本號最新的一個（檔名：..._<版本>_neutral__...）
             $lxpFile = Get-ChildItem -Path $sPath |
                        Where-Object { $_.Name -match "LanguageExperiencePack$([regex]::Escape($searchTag))" -and $_.Extension -match "(?i)\.appx" } |
+                       Sort-Object { try { [version](($_.BaseName -split '_')[1]) } catch { [version]'0.0' } } -Descending |
                        Select-Object -First 1
 
             if ($lxpFile) {
@@ -1007,12 +1028,14 @@ $btnInstall.Add_Click({
                     }
                 }
                 if (-not $cancel.Value) {
-                    if ($tagLower -match "zh-tw|zh-hk") {
-                        Start-Proc "Dism.exe" @("/online", "/NoRestart", "/add-capability", "/capabilityname:Language.Fonts.Hant~~~und-HANT~0.0.1.0", "/source:`"$basePath`"", "/LimitAccess") | Out-Null
-                        Log "字體：Hant 繁體中文"
-                    } elseif ($tagLower -eq "zh-cn") {
-                        Start-Proc "Dism.exe" @("/online", "/NoRestart", "/add-capability", "/capabilityname:Language.Fonts.Hans~~~und-HANS~0.0.1.0", "/source:`"$basePath`"", "/LimitAccess") | Out-Null
-                        Log "字體：Hans 簡體中文"
+                    # 部分語言需要額外字型組件（Microsoft：例如日文檔名含 Jpan）
+                    $fontMap = @{ "zh-tw" = @("Hant", "繁體中文"); "zh-hk" = @("Hant", "繁體中文"); "zh-cn" = @("Hans", "簡體中文");
+                                  "ja-jp" = @("Jpan", "日文");     "ko-kr" = @("Kore", "韓文") }
+                    if ($fontMap.ContainsKey($tagLower)) {
+                        $fg = $fontMap[$tagLower][0]
+                        $fe = Start-Proc "Dism.exe" @("/online", "/NoRestart", "/add-capability", "/capabilityname:Language.Fonts.$fg~~~und-$($fg.ToUpper())~0.0.1.0", "/source:`"$basePath`"", "/LimitAccess")
+                        if ($fe -eq 0 -or $fe -eq 3010 -or $fe -eq -2146498222 -or $fe -eq 2148468074) { Log "字體：$fg $($fontMap[$tagLower][1])" }
+                        else { Log "⚠️  字體 $fg 安裝失敗 (Exit: $fe)" }
                     }
                 }
                 if ($cancel.Value) { SetStep $steps 2 "skip"; Log "取消：FOD 安裝已中止。" }
@@ -1033,14 +1056,14 @@ $btnInstall.Add_Click({
                 if ($isPrimary) {
                     # 主要語言處理
                     if ($tagBcp47 -eq "zh-HK") {
-                        # zh-HK 特別：插入 zh-HK 第一、zh-TW 第二
-                        if ($ll.LanguageTag -notcontains "zh-HK") { $ll.Insert(0, "zh-HK") }
-                        if ($ll.LanguageTag -notcontains "zh-TW") { $ll.Insert(1, "zh-TW") }
-                        $hkIdx = [array]::IndexOf(($ll | ForEach-Object { $_.LanguageTag }), "zh-HK")
-                        $twIdx = [array]::IndexOf(($ll | ForEach-Object { $_.LanguageTag }), "zh-TW")
-                        if ($hkIdx -gt $twIdx) { $hkItem = $ll[$hkIdx]; $ll.RemoveAt($hkIdx); $ll.Insert(0, $hkItem) }
-                        Set-WinUserLanguageList $ll -Force
-                        Log "★ 主要語言 - 語言清單：zh-HK 第一、zh-TW 第二（繁體 Fallback）。"
+                        # zh-HK 特別：zh-HK 第一、zh-TW 第二（繁體 Fallback），其他語言保持原有次序
+                        # 注意：Windows 內部標籤是 zh-Hant-HK / zh-Hant-TW，不能用 "zh-HK" 字串比對，否則會重複加入
+                        $others = @($ll | Where-Object { $_.LanguageTag -notmatch '^zh-(Hant-)?(HK|TW)$' })
+                        $newList = New-WinUserLanguageList -Language "zh-HK"
+                        $newList.Add("zh-TW")
+                        foreach ($o in $others) { $newList.Add($o) }
+                        Set-WinUserLanguageList $newList -Force
+                        Log "★ 主要語言 - 語言清單：$((Get-WinUserLanguageList | ForEach-Object { $_.LanguageTag }) -join ' › ')（繁體 Fallback）。"
                     } else {
                         if ($ll.LanguageTag -notcontains $tagBcp47) { $ll.Insert(0, $tagBcp47); Set-WinUserLanguageList $ll -Force }
                         Log "★ 主要語言 - 語言清單：$tagBcp47 設為第一。"
@@ -1048,8 +1071,11 @@ $btnInstall.Add_Click({
 
                     Set-WinSystemLocale       -SystemLocale $systemLocale -ErrorAction Stop
                     Log "★ 主要語言 - 非 Unicode 程序語言：$systemLocale。"
-                    Set-WinUILanguageOverride -Language $tagBcp47 -ErrorAction Stop
-                    Log "★ 主要語言 - UI 顯示語言：$tagBcp47。"
+                    # Windows 沒有 zh-HK 介面語言（已安裝介面語言只有 zh-TW），設成 zh-HK 會被忽略並退回英文
+                    $uiLang = if ($tagBcp47 -eq "zh-HK") { "zh-TW" } else { $tagBcp47 }
+                    Set-WinUILanguageOverride -Language $uiLang -ErrorAction Stop
+                    if ($uiLang -ne $tagBcp47) { Log "★ 主要語言 - UI 顯示語言：$uiLang（香港繁體介面使用 zh-TW 介面語言；地區及格式仍為香港）。" }
+                    else { Log "★ 主要語言 - UI 顯示語言：$uiLang。" }
 
                     $geoMap = @{
                         "zh-HK"=104; "zh-TW"=237; "zh-CN"=45;  "en-US"=244
@@ -1070,7 +1096,9 @@ $btnInstall.Add_Click({
                         try {
                             $basePaths = @(
                                 "HKCU:\Control Panel\International\User Profile\zh-Hant-HK",
-                                "HKCU:\Control Panel\International\User Profile System Backup\zh-Hant-HK"
+                                "HKCU:\Control Panel\International\User Profile System Backup\zh-Hant-HK",
+                                "HKCU:\Control Panel\International\User Profile\zh-Hant-TW",
+                                "HKCU:\Control Panel\International\User Profile System Backup\zh-Hant-TW"
                             )
                             foreach ($path in $basePaths) {
                                 if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
@@ -1111,6 +1139,24 @@ $btnInstall.Add_Click({
             }
             $doneLangs++      # 先遞增再更新進度，確保顯示正確
             UpdateProgress
+        }
+
+        # ===== 累積更新（LCU）=====
+        # Microsoft：加入語言後要重新安裝該版本的累積更新，語言資源才會與系統版本一致
+        # （否則介面檔案版本不符，Windows 會退回英文介面）。把 .msu 放在工具旁的 LCU 資料夾即可，
+        # 24H2 的「檢查點」更新（例如 KB5043080）放在同一資料夾，DISM 會按正確次序安裝。
+        $lcuDir = Join-Path $sPath "LCU"
+        $msus = @(Get-ChildItem -Path $lcuDir -Filter *.msu -ErrorAction SilentlyContinue)
+        if (-not $cancel.Value -and $msus.Count -gt 0) {
+            UI { $lblCurrentLang.Text = "正在安裝累積更新（約需 20–60 分鐘，請勿關機）..." }
+            Log "---"
+            Log ">>> 安裝累積更新：$($msus.Name -join ', ')"
+            $ec = Start-Proc "Dism.exe" @("/online", "/NoRestart", "/Add-Package", "/PackagePath:`"$lcuDir`"")
+            if ($ec -eq 0 -or $ec -eq 3010) { Log "累積更新安裝完成，重新啟動後生效。" }
+            elseif ($ec -eq -1) { Log "取消：累積更新已中止。" }
+            else { Log "⚠️  DISM 回傳 $ec：如果資料夾內的檢查點更新（例如 KB5043080）系統早已包含，DISM 會回報錯誤但最新累積更新仍會安裝。重新開機後請用 winver 確認版本；如版本未更新，可手動執行：DISM /Online /Add-Package /PackagePath:`"$lcuDir`"" }
+        } elseif (-not $cancel.Value) {
+            Log "ℹ️  LCU 資料夾沒有 .msu：請之後安裝本版本最新的累積更新（Windows Update / WSUS，或由 Microsoft Update Catalog 下載 .msu），否則部分介面可能仍是英文。"
         }
 
         # ===== 完成後恢復 UI =====
