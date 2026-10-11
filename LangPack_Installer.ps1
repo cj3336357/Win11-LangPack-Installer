@@ -1080,6 +1080,30 @@ $btnInstall.Add_Click({
                     $lc = "HKCU:\Control Panel\Desktop\LanguageConfiguration"
                     if (-not (Test-Path $lc)) { New-Item -Path $lc -Force | Out-Null }
                     Set-ItemProperty -Path $lc -Name $uiLang -Value ([string[]]@("en-US")) -Type MultiString -ErrorAction SilentlyContinue
+
+                    # VM 測試：裝完語言包後第一次登入時，Windows 會重新計算顯示語言並蓋過上面的設定（變回英文）。
+                    # 所以登記一個「下次登入執行一次」的工作：登入後再寫一次顯示語言，然後自動登出；再登入即為新語言。
+                    $apply = @"
+Set-WinUILanguageOverride -ErrorAction SilentlyContinue
+Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name PreferredUILanguages -Value ([string[]]@('$uiLang')) -Type MultiString
+`$lc = 'HKCU:\Control Panel\Desktop\LanguageConfiguration'
+if (-not (Test-Path `$lc)) { New-Item -Path `$lc -Force | Out-Null }
+Set-ItemProperty -Path `$lc -Name '$uiLang' -Value ([string[]]@('en-US')) -Type MultiString
+(New-Object -ComObject WScript.Shell).Popup('顯示語言已套用，30 秒後自動登出；再登入後即會生效。', 30, '語言包安裝工具', 64) | Out-Null
+shutdown.exe /l
+"@
+                    # Run / RunOnce 指令上限 260 字元（太長會被 Windows 靜靜忽略），所以把步驟存成檔案，RunOnce 只放短指令
+                    $applyDir  = Join-Path $env:ProgramData "LangPackInstaller"
+                    $applyFile = Join-Path $applyDir "apply-ui.ps1"
+                    New-Item -ItemType Directory -Force -Path $applyDir | Out-Null
+                    [IO.File]::WriteAllText($applyFile, $apply, [Text.UTF8Encoding]::new($true))
+                    $runCmd = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$applyFile`""
+                    # 新用戶預設沒有 HKCU 的 RunOnce 機碼：要先建立，否則 New-ItemProperty 只會出非致命錯誤、什麼都沒寫入
+                    $ro = "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce"
+                    if (-not (Test-Path $ro)) { New-Item -Path $ro -Force | Out-Null }
+                    New-ItemProperty -Path $ro -Name "LangPackApplyDisplayLanguage" -Value $runCmd -Force -ErrorAction Stop | Out-Null
+                    if ((Get-ItemProperty -Path $ro -Name "LangPackApplyDisplayLanguage" -ErrorAction Stop).LangPackApplyDisplayLanguage -ne $runCmd) { throw "RunOnce 寫入後讀回不一致" }
+                    Log "★ 已登記：重新開機後第一次登入會再套用顯示語言 $uiLang，並自動登出一次。"
                     if ($uiLang -ne $tagBcp47) { Log "★ 主要語言 - UI 顯示語言：$uiLang（香港繁體介面使用 zh-TW 介面語言；地區及格式仍為香港）。" }
                     else { Log "★ 主要語言 - UI 顯示語言：$uiLang。" }
 

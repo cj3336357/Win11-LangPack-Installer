@@ -102,8 +102,10 @@ if ($phase -eq '1') {
     Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl DefaultUserName 'Administrator'; Set-ItemProperty $wl DefaultPassword 'LangPack-Test-2026'; Set-ItemProperty $wl DefaultDomainName '.'
     Set-ItemProperty $wl AutoLogonCount 3 -Type DWord
     New-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Name LangPackTest -Force `
-        -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
+        -Value "cmd.exe /c start `"`" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
     Set-Content "$root\restart_time.txt" ((Get-Date).ToUniversalTime().ToString('o'))
+    Set-Content "$root\fallback_done.txt" 'off'    # test the tool alone: no harness fallback for the display language
+    Set-ItemProperty $wl ForceAutoLogon '1'         # the tool signs out once after the restart - log on again by itself
     Say "restarting"
     try { $p.CloseMainWindow() | Out-Null } catch {}
     Start-Sleep 5; Restart-Computer -Force
@@ -111,6 +113,16 @@ if ($phase -eq '1') {
 }
 
 if ($phase -eq '2') {
+    if (-not (Test-Path "$root\p2_first_logon.txt")) {
+        # first logon after the restart: the tool's RunOnce re-applies the display language and signs out after 30 s.
+        # Register this script again so it runs at the next logon, and wait for the sign-out.
+        Set-Content "$root\p2_first_logon.txt" '1'
+        New-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Name LangPackTest -Force `
+            -Value "cmd.exe /c start `"`" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
+        Say "first logon after restart - waiting for the tool's display-language re-apply and sign-out"
+        Start-Sleep 150
+        Say "no sign-out within 150 s - checking this session"
+    } else { Say "second logon (after the tool's sign-out)" }
     Start-Sleep 90   # let Explorer finish loading the new UI language
     # did the machine really restart since phase 1?
     $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
@@ -153,7 +165,7 @@ if ($phase -eq '2') {
         & reg.exe export 'HKLM\SYSTEM\CurrentControlSet\Control\MUI' "$res\before_hklm_mui.reg" /y | Out-Null
         Set-Content $phaseFile '2b'
         New-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Name LangPackTest -Force `
-            -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
+            -Value "cmd.exe /c start `"`" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
         $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
         Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl AutoLogonCount 3 -Type DWord
         Say "manual step: waiting for a person to change the display language in Settings and sign out"
@@ -172,7 +184,7 @@ if ($phase -eq '2') {
         Set-ItemProperty 'HKCU:\Control Panel\Desktop' -Name PreferredUILanguages -Value ([string[]]@('zh-TW')) -Type MultiString
         Set-Content $phaseFile '2c'
         New-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Name LangPackTest -Force `
-            -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
+            -Value "cmd.exe /c start `"`" powershell.exe -NoProfile -ExecutionPolicy Bypass -STA -File $root\harness.ps1" | Out-Null
         $wl = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
         Set-ItemProperty $wl AutoAdminLogon '1'; Set-ItemProperty $wl AutoLogonCount 3 -Type DWord
         Set-ItemProperty $wl ForceAutoLogon '1'   # log on again by itself after the sign-out (not only after a restart)

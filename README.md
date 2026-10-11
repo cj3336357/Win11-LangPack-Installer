@@ -34,8 +34,11 @@ Also:
   en-US, locale zh-CN; *Mainland user*: zh-CN > zh-HK > en-US).
 - **zh-HK input fix**: removes the Bopomofo (Zhuyin) keyboard that Windows adds for zh-HK and adds Quick (速成)
   instead (takes effect after signing out and in).
-- **zh-HK display language**: Windows has no separate zh-HK UI language, so the display language is set to zh-TW
-  while the language list, region and formats stay Hong Kong.
+- **Display language that sticks**: on the first sign-in after installing language packs Windows recalculates the
+  display language and overwrites the setting. The tool therefore also registers a one-time task (user `RunOnce`) that
+  applies the display language again at the next sign-in and signs out once after 30 seconds; after signing in again
+  the interface is in the new language. For zh-HK the display language is zh-TW (Windows has no separate zh-HK UI
+  language) while the language list, region and formats stay Hong Kong.
 - **Pre-install check**: reports languages that are already installed (via DISM) before anything changes.
 - Cancel button, restart button, copy log and export an installation report.
 
@@ -101,18 +104,19 @@ Results with the *Hong Kong user* profile (October 2026, LTSC 24H2, LXP 26100.17
 | Input methods | Quick (速成) only, Zhuyin removed |
 | Language clean-up tasks | disabled |
 | Sysprep `/generalize` afterwards | succeeds |
-| Display language | Chinese after sign-out / restart with the *Settings* method (see below) |
+| Display language | **Chinese** - after the restart the tool signed out once by itself; after signing in again Explorer, the taskbar and the console showed Traditional Chinese |
 
 ## Display language: what the tests showed
 
-- `Set-WinUILanguageOverride zh-TW` was **ignored** for the *Hong Kong user* profile: after the restart the interface
-  stayed English. Windows keeps only zh-Hant-HK and en-US in the user language list (an added zh-TW entry is dropped
-  when zh-HK is present), and the override is not used for a language that is not in the list.
-- Changing *Settings > Windows display language* by hand, and the same change made by script (clear the override,
-  set `HKCU\Control Panel\Desktop\PreferredUILanguages` = zh-TW), gave a **Chinese interface** after signing out -
-  with and without the cumulative update.
-- The tool therefore sets the display language the second way. That exact change was verified in the VM test; the
-  tool version that includes it has not been run end to end again.
+- `Set-WinUILanguageOverride zh-TW` was ignored for the *Hong Kong user* profile: Windows keeps only zh-Hant-HK and
+  en-US in the user language list (an added zh-TW entry is dropped when zh-HK is present), and the override is not
+  used for a language that is not in the list.
+- Writing `HKCU\Control Panel\Desktop\PreferredUILanguages` the way *Settings* does works, but a value written
+  before the restart is reset to en-US at the first sign-in after the language packs were installed.
+- Applying it again at that first sign-in and signing out once gives a Chinese interface. The tool does this with
+  a user `RunOnce` entry (the key does not exist for new users and is created first). Verified end to end in the VM
+  test, with Sysprep succeeding afterwards.
+- The cumulative update was not needed for the display language in these tests.
 ## Notes and limitations
 
 - Windows 11 24H2 only; other builds need their own matching ISO.
