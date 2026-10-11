@@ -1073,7 +1073,13 @@ $btnInstall.Add_Click({
                     Log "★ 主要語言 - 非 Unicode 程序語言：$systemLocale。"
                     # Windows 沒有 zh-HK 介面語言（已安裝介面語言只有 zh-TW），設成 zh-HK 會被忽略並退回英文
                     $uiLang = if ($tagBcp47 -eq "zh-HK") { "zh-TW" } else { $tagBcp47 }
-                    Set-WinUILanguageOverride -Language $uiLang -ErrorAction Stop
+                    # 跟「設定 > Windows 顯示語言」的做法：清除 override，寫入 PreferredUILanguages。
+                    # （VM 測試：Set-WinUILanguageOverride 在 zh-TW 不在語言清單時會被忽略，介面仍是英文；此做法登出後即為中文）
+                    Set-WinUILanguageOverride -ErrorAction SilentlyContinue
+                    Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "PreferredUILanguages" -Value ([string[]]@($uiLang)) -Type MultiString -ErrorAction Stop
+                    $lc = "HKCU:\Control Panel\Desktop\LanguageConfiguration"
+                    if (-not (Test-Path $lc)) { New-Item -Path $lc -Force | Out-Null }
+                    Set-ItemProperty -Path $lc -Name $uiLang -Value ([string[]]@("en-US")) -Type MultiString -ErrorAction SilentlyContinue
                     if ($uiLang -ne $tagBcp47) { Log "★ 主要語言 - UI 顯示語言：$uiLang（香港繁體介面使用 zh-TW 介面語言；地區及格式仍為香港）。" }
                     else { Log "★ 主要語言 - UI 顯示語言：$uiLang。" }
 
@@ -1096,9 +1102,7 @@ $btnInstall.Add_Click({
                         try {
                             $basePaths = @(
                                 "HKCU:\Control Panel\International\User Profile\zh-Hant-HK",
-                                "HKCU:\Control Panel\International\User Profile System Backup\zh-Hant-HK",
-                                "HKCU:\Control Panel\International\User Profile\zh-Hant-TW",
-                                "HKCU:\Control Panel\International\User Profile System Backup\zh-Hant-TW"
+                                "HKCU:\Control Panel\International\User Profile System Backup\zh-Hant-HK"
                             )
                             foreach ($path in $basePaths) {
                                 if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }

@@ -20,10 +20,11 @@ sysprepped). Then, for each selected language, four steps with a progress list a
 | 1. Base language pack (`.cab`) | `DISM /Add-Package` from the Languages and Optional Features ISO; zh-HK uses the zh-TW pack, installed once |
 | 2. Modern UI pack (Local Experience Pack `.appx`) | `Add-AppxProvisionedPackage`, newest version in the folder; zh-HK uses the zh-TW LXP, as Windows does |
 | 3. Features on Demand | `DISM /Add-Capability` for Basic, OCR, Handwriting, Speech, Text-to-Speech, plus the font package where one exists (Hant, Hans, Jpan, Kore) |
-| 4. Settings (main language only) | Language list order, display language override, system locale (non-Unicode programs), home location (GeoId) and regional format |
+| 4. Settings (main language only) | Language list order, display language (set the way *Settings* does it: `PreferredUILanguages`), system locale (non-Unicode programs), home location (GeoId) and regional format |
 
-After the languages, if a `LCU` folder next to the tool contains `.msu` files, it installs that cumulative update
-(Microsoft: re-apply the cumulative update after adding languages so the language resources match the OS build).
+After the languages, if a `LCU` folder next to the tool contains `.msu` files, it installs that cumulative update.
+Microsoft recommends re-applying the cumulative update after adding languages so the language resources match the
+OS build; in the tests the display language worked without it, so this step is optional.
 
 Also:
 
@@ -100,20 +101,18 @@ Results with the *Hong Kong user* profile (October 2026, LTSC 24H2, LXP 26100.17
 | Input methods | Quick (速成) only, Zhuyin removed |
 | Language clean-up tasks | disabled |
 | Sysprep `/generalize` afterwards | succeeds |
-| **Display language** | **still English** - see *Known issue* |
+| Display language | Chinese after sign-out / restart with the *Settings* method (see below) |
 
-## Known issue
+## Display language: what the tests showed
 
-In every VM test the Windows interface stayed in **English** after the restart, although the zh-TW language pack is
-installed and current. This happened with the tool's setting, with Windows' own *Settings > Windows display
-language* change followed by sign-out, and also after the cumulative update.
-
-What the tests show so far: Windows keeps only *zh-Hant-HK* and *en-US* in the user language list - an added zh-TW
-entry is dropped when zh-HK is present - and the display language that is set (zh-TW) is then not used. The likely
-cause is that Windows only uses a display language that is in the user language list. Not verified yet; a profile
-with zh-TW as the main language would show whether that is the reason. Until then, check the display language
-after installing and set it in Settings if needed.
-
+- `Set-WinUILanguageOverride zh-TW` was **ignored** for the *Hong Kong user* profile: after the restart the interface
+  stayed English. Windows keeps only zh-Hant-HK and en-US in the user language list (an added zh-TW entry is dropped
+  when zh-HK is present), and the override is not used for a language that is not in the list.
+- Changing *Settings > Windows display language* by hand, and the same change made by script (clear the override,
+  set `HKCU\Control Panel\Desktop\PreferredUILanguages` = zh-TW), gave a **Chinese interface** after signing out -
+  with and without the cumulative update.
+- The tool therefore sets the display language the second way. That exact change was verified in the VM test; the
+  tool version that includes it has not been run end to end again.
 ## Notes and limitations
 
 - Windows 11 24H2 only; other builds need their own matching ISO.

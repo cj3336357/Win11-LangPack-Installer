@@ -118,7 +118,8 @@ if ($phase -eq '2') {
     Say "boot time $($boot.ToString('HH:mm:ss')) UTC, restart requested $($restartAt.ToString('HH:mm:ss')) UTC, rebooted=$($boot -gt $restartAt)"
     ScreenShot "$res\3_desktop_after_restart.png"
     # language actually shown by Explorer: localized name of the Recycle Bin
-    $recycle = (New-Object -ComObject Shell.Application).NameSpace(10).Self.Name
+    # the console title is localised by Windows ("Administrator:" / "系統管理員:") - the Recycle Bin name read through COM was not reliable
+    $recycle = (Get-Process -Id $PID).MainWindowTitle
     Start-Process 'ms-settings:regionlanguage'; Start-Sleep 15
     ScreenShot "$res\4_settings_language.png"
     $hk = 'HKCU:\Control Panel\International\User Profile\zh-Hant-HK'
@@ -162,7 +163,7 @@ if ($phase -eq '2') {
         return
     }
 
-    if ($recycle -eq 'Recycle Bin' -and -not (Test-Path "$root\fallback_done.txt")) {
+    if ($recycle -match '^Administrator' -and -not (Test-Path "$root\fallback_done.txt")) {
         # still English: try what Windows Settings itself wrote in the manual comparison run
         # (PreferredUILanguages = zh-TW, no WindowsOverride), then sign out and check again in phase 2c
         Set-Content "$root\fallback_done.txt" '1'
@@ -183,7 +184,7 @@ if ($phase -eq '2') {
 
 if ($phase -eq '2c') {
     Start-Sleep 90
-    $rb = (New-Object -ComObject Shell.Application).NameSpace(10).Self.Name
+    $rb = (Get-Process -Id $PID).MainWindowTitle
     ScreenShot "$res\6_desktop_after_fallback.png"
     [ordered]@{
         RecycleBinName     = $rb
@@ -201,7 +202,7 @@ if ($phase -eq '2b') {
     & reg.exe export 'HKLM\SYSTEM\CurrentControlSet\Control\MUI' "$res\after_hklm_mui.reg" /y | Out-Null
     ScreenShot "$res\5_desktop_after_manual.png"
     $state2 = [ordered]@{
-        RecycleBinName    = (New-Object -ComObject Shell.Application).NameSpace(10).Self.Name
+        RecycleBinName    = (Get-Process -Id $PID).MainWindowTitle
         UILanguageOverride = "$(Get-WinUILanguageOverride)"
         PreferredUILang   = ((Get-ItemProperty 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).PreferredUILanguages -join ',')
         SystemPreferredUI = "$(try { Get-SystemPreferredUILanguage } catch { 'n/a' })"
